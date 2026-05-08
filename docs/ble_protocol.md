@@ -55,6 +55,19 @@ Suggested command draft:
 {"type":"ping"}
 ```
 
+## Validation Result
+
+- Device name: `Lissence-ESP32`
+- Service UUID: `7d2f3a10-3b7a-4f9f-9b37-6b6a0f4f7c10`
+- Characteristic UUID: `7d2f3a11-3b7a-4f9f-9b37-6b6a0f4f7c10`
+- ESP32 to iPhone notify: confirmed
+- iPhone to ESP32 write: confirmed
+- Test payload:
+
+```json
+{"type":"haptic","pattern":"warning"}
+```
+
 ## Future Message Types
 
 - Microphone event notification: ESP32 to iPhone
