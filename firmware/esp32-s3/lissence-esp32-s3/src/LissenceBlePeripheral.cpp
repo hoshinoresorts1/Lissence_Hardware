@@ -11,12 +11,14 @@ bool isConnected = false;
 #if ENABLE_AUDIO_STREAMING
 bool audioStreamStartRequested = false;
 bool audioStreamStopRequested = false;
+bool isAudioStreamingActive = false;
 #endif
 uint32_t lastNotifyMillis = 0;
 uint32_t notifySequence = 0;
 
 #if ENABLE_AUDIO_STREAMING
-constexpr size_t AudioPacketHeaderSize = 6;
+constexpr uint8_t AudioPacketMagic = 0xA1;
+constexpr size_t AudioPacketHeaderSize = 7;
 constexpr size_t MaxAudioPacketPayloadSize = 160;
 #endif
 
@@ -79,6 +81,12 @@ void sendTestNotification() {
     return;
   }
 
+#if ENABLE_AUDIO_STREAMING
+  if (isAudioStreamingActive) {
+    return;
+  }
+#endif
+
   const uint32_t now = millis();
   if (now - lastNotifyMillis < 2000) {
     return;
@@ -100,9 +108,6 @@ void sendTestNotification() {
 namespace LissenceBlePeripheral {
 
 void begin() {
-#if ENABLE_AUDIO_STREAMING
-  NimBLEDevice::setMTU(185);
-#endif
   Serial.println("[BLE] init");
   NimBLEDevice::init(DeviceName);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
@@ -150,6 +155,12 @@ void sendMicLevel(int32_t rms, int32_t peak) {
     return;
   }
 
+#if ENABLE_AUDIO_STREAMING
+  if (isAudioStreamingActive) {
+    return;
+  }
+#endif
+
   String payload = String("{\"type\":\"mic_level\",\"rms\":") + rms +
                    ",\"peak\":" + peak + "}";
   dataCharacteristic->setValue(payload.c_str());
@@ -179,6 +190,10 @@ bool consumeAudioStreamStopRequest() {
   return true;
 }
 
+void setAudioStreamingActive(bool isActive) {
+  isAudioStreamingActive = isActive;
+}
+
 bool sendAudioStreamPacket(
     uint16_t sequence,
     uint8_t packetIndex,
@@ -195,12 +210,13 @@ bool sendAudioStreamPacket(
   }
 
   uint8_t packet[AudioPacketHeaderSize + MaxAudioPacketPayloadSize] = {};
-  packet[0] = static_cast<uint8_t>(sequence & 0xFF);
-  packet[1] = static_cast<uint8_t>((sequence >> 8) & 0xFF);
-  packet[2] = packetIndex;
-  packet[3] = packetCount;
-  packet[4] = static_cast<uint8_t>(payloadSize & 0xFF);
-  packet[5] = static_cast<uint8_t>((payloadSize >> 8) & 0xFF);
+  packet[0] = AudioPacketMagic;
+  packet[1] = static_cast<uint8_t>(sequence & 0xFF);
+  packet[2] = static_cast<uint8_t>((sequence >> 8) & 0xFF);
+  packet[3] = packetIndex;
+  packet[4] = packetCount;
+  packet[5] = static_cast<uint8_t>(payloadSize & 0xFF);
+  packet[6] = static_cast<uint8_t>((payloadSize >> 8) & 0xFF);
   memcpy(packet + AudioPacketHeaderSize, payload, payloadSize);
 
   dataCharacteristic->setValue(packet, AudioPacketHeaderSize + payloadSize);

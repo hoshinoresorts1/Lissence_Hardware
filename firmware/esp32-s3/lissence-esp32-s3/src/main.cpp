@@ -8,16 +8,16 @@ namespace {
 
 #if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
 constexpr i2s_port_t MicI2SPort = I2S_NUM_0;
-constexpr int MicSckPin = 1;
-constexpr int MicWsPin = 2;
-constexpr int MicSdPin = 3;
-constexpr uint32_t MicSampleRate = 16000;
+constexpr int MicSckPin = 26;
+constexpr int MicWsPin = 25;
+constexpr int MicSdPin = 33;
+constexpr uint32_t MicSampleRate = 8000;
 constexpr size_t MicSampleCount = 256;
 constexpr uint32_t MicPrintIntervalMs = 500;
 #endif
 
 #if ENABLE_AUDIO_STREAMING
-constexpr size_t AudioStreamSamplesPerChunk = 320;
+constexpr size_t AudioStreamSamplesPerChunk = 160;
 constexpr size_t AudioStreamBytesPerChunk = AudioStreamSamplesPerChunk * sizeof(int16_t);
 constexpr size_t AudioStreamPacketPayloadSize = 160;
 constexpr uint32_t AudioStreamDurationMs = 3000;
@@ -37,7 +37,7 @@ bool isMicReady = false;
 bool isAudioStreaming = false;
 
 int16_t convertToPcm16(int32_t sample) {
-  const int32_t scaledSample = sample >> 11;
+  const int32_t scaledSample = sample >> 8;
   if (scaledSample > INT16_MAX) {
     return INT16_MAX;
   }
@@ -56,7 +56,7 @@ void beginMicrophone() {
       .mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_RX),
       .sample_rate = MicSampleRate,
       .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
-      .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+      .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
       .communication_format = I2S_COMM_FORMAT_STAND_I2S,
       .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
       .dma_buf_count = 4,
@@ -162,9 +162,10 @@ void startAudioStream() {
   }
 
   isAudioStreaming = true;
+  LissenceBlePeripheral::setAudioStreamingActive(true);
   audioStreamStartedMillis = millis();
   audioStreamSequence = 0;
-  Serial.println("[AUDIO] 3 second PCM stream started");
+  Serial.println("[AUDIO] 3 second PCM stream started at 8kHz");
 }
 
 void stopAudioStream(const char* reason) {
@@ -173,6 +174,7 @@ void stopAudioStream(const char* reason) {
   }
 
   isAudioStreaming = false;
+  LissenceBlePeripheral::setAudioStreamingActive(false);
   Serial.print("[AUDIO] PCM stream stopped: ");
   Serial.println(reason);
 }
@@ -229,7 +231,7 @@ void sendAudioStreamChunk() {
         payloadSize);
 
     didDropPacket = didDropPacket || !didNotify;
-    delay(2);
+    vTaskDelay(pdMS_TO_TICKS(3));
   }
 
   if (audioStreamSequence % 25 == 0) {
@@ -270,7 +272,7 @@ void setup() {
 
   Serial.println();
   Serial.println("[BOOT] ESP32-WROOM-32E boot");
-  Serial.println("[BOOT] BLE only mode");
+  Serial.println("[BOOT] BLE + INMP441 microphone mode");
   LissenceBlePeripheral::begin();
 #if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
   beginMicrophone();

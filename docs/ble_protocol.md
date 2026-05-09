@@ -6,17 +6,17 @@ Lissence 하드웨어와 iPhone 앱은 BLE를 통해 짧은 상태 메시지와 
 
 | 구분 | 역할 | 방향 | 통신 방식 |
 | --- | --- | --- | --- |
-| ESP32-C3 | BLE Peripheral | ESP32 -> iPhone | Notify |
+| ESP32-WROOM-32E | BLE Peripheral | ESP32 -> iPhone | Notify |
 | iPhone 앱 | BLE Central | iPhone -> ESP32 | Write / Write Without Response |
 
-1차 프로토콜은 BLE 연결, notify, write 검증을 목표로 합니다. 메시지는 사람이 읽기 쉽고 디버깅하기 쉬운 UTF-8 JSON String을 사용합니다.
+1차 프로토콜은 BLE 연결, notify, write 검증을 목표로 합니다. 상태/명령 메시지는 사람이 읽기 쉽고 디버깅하기 쉬운 UTF-8 JSON String을 사용합니다. PCM 오디오 스트리밍 PoC는 BLE packet 크기를 고려해 binary notify packet을 사용합니다.
 
 ## Device
 
 | 항목 | 값 |
 | --- | --- |
 | BLE 이름 | `Lissence-ESP32` |
-| Peripheral | ESP32-C3 |
+| Peripheral | ESP32-WROOM-32E |
 | Central | iPhone 앱 |
 
 ## GATT
@@ -37,9 +37,10 @@ Lissence 하드웨어와 iPhone 앱은 BLE를 통해 짧은 상태 메시지와 
 ## 메시지 인코딩
 
 - 모든 payload는 UTF-8 JSON String입니다.
-- 1차 구현에서는 사람이 읽기 쉬운 JSON을 사용합니다.
+- 상태 메시지와 write command는 UTF-8 JSON String입니다.
+- PCM audio stream notify만 binary packet입니다.
 - 배터리 사용량, 지연시간, BLE packet 크기가 문제가 되면 이후 binary protocol을 검토합니다.
-- 현재 단계에서는 raw audio를 BLE로 streaming하지 않습니다.
+- 현재 PCM audio stream은 SoundAnalysis 연결 전 chunk reconstruction 안정성 검증용 PoC입니다.
 
 ## ESP32 -> iPhone Notify 메시지
 
@@ -78,6 +79,49 @@ ESP32는 iPhone이 notify를 subscribe한 뒤 상태와 이벤트를 Characteris
 
 ```json
 {"type":"error","code":"sensor_unavailable","message":"INMP441 is not ready"}
+```
+
+## ESP32 -> iPhone PCM Audio Stream Binary Notify
+
+PCM audio stream은 continuous streaming이 아니라 iPhone의 write command로 시작되는 3초 테스트 스트리밍입니다. 목적은 raw audio 분석이 아니라 BLE packet 분할, 수신, chunk reconstruction 안정성 검증입니다.
+
+### Audio 설정
+
+| 항목 | 값 |
+| --- | --- |
+| Source | INMP441 I2S microphone |
+| Sample rate | 8 kHz |
+| Channel | Mono |
+| PCM format | 16-bit signed little-endian |
+| Chunk duration | 20 ms |
+| Samples per chunk | 160 samples |
+| PCM bytes per chunk | 320 bytes |
+
+### Binary packet header
+
+각 20ms chunk는 BLE MTU를 고려해 여러 notify packet으로 분할됩니다. 모든 정수는 little-endian입니다.
+
+| Offset | Type | Field | 설명 |
+| --- | --- | --- | --- |
+| 0 | `uint8` | `magic` | audio packet 식별자, `0xA1` |
+| 1 | `uint16` | `sequence` | 20ms PCM chunk sequence |
+| 3 | `uint8` | `packetIndex` | chunk 안의 packet index, 0부터 시작 |
+| 4 | `uint8` | `packetCount` | 해당 chunk를 구성하는 전체 packet 수 |
+| 5 | `uint16` | `payloadSize` | 이 packet의 PCM payload byte 수 |
+| 7 | bytes | `payload` | 16-bit signed PCM little-endian 일부 |
+
+현재 ESP32 PoC는 MTU 강제 튜닝 없이 packet payload를 최대 160 bytes로 제한합니다. 320 byte chunk는 보통 2개 packet으로 전송됩니다. BLE notify queue 과부하를 줄이기 위해 packet 사이에 약 3ms pacing delay를 둡니다. Audio streaming 중에는 같은 characteristic을 사용하는 `test`, `mic_level` JSON notify를 잠시 중단하고, streaming 종료 후 재개합니다.
+
+### Audio Stream 제어 command
+
+3초 테스트 스트리밍은 iPhone write command로 시작하고, 3초가 지나면 ESP32에서 자동 종료합니다. 필요하면 중지 command로 즉시 멈춥니다.
+
+```json
+{"type":"config","audio_stream":true}
+```
+
+```json
+{"type":"config","audio_stream":false}
 ```
 
 ## iPhone -> ESP32 Write 메시지
@@ -124,15 +168,24 @@ iPhone 앱은 같은 Data Characteristic에 write하여 ESP32로 명령을 전�
 ```
 
 ```json
+{"type":"config","audio_stream":true}
+```
+
+```json
+{"type":"config","audio_stream":false}
+```
+
+```json
 {"type":"ping","seq":10}
 ```
 
 ## 현재 버전에서 하지 않을 것
 
-- Raw audio BLE streaming
+- Continuous raw audio BLE streaming
 - ESP32에서 CoreML inference 실행
 - Apple Watch의 ESP32 직접 BLE 연결
 - DRV2605L 제어 구현
+- iPhone SoundAnalysis와 PCM stream 직접 연결
 
 DRV2605L 기반 햅틱 실행은 하드웨어 도착 후 다음 단계에서 구현합니다.
 
@@ -181,7 +234,8 @@ iPhone -> ESP32 write:
 ## 앞으로의 단계
 
 1. iPhone 앱 BLE 테스트 화면에서 `mic_level` 수신값 확인
-2. ESP32에서 INMP441 기반 `mic_event` notify 구현
-3. DRV2605L 도착 후 `haptic` command 실행
-4. 음악모드 `currentMood`를 `haptic` write payload로 연결
-5. 배터리 측정 회로 추가 후 `battery` notify 구현
+2. PCM audio stream binary notify packet reconstruction 안정성 검증
+3. ESP32에서 INMP441 기반 `mic_event` notify 구현
+4. DRV2605L 도착 후 `haptic` command 실행
+5. 음악모드 `currentMood`를 `haptic` write payload로 연결
+6. 배터리 측정 회로 추가 후 `battery` notify 구현
