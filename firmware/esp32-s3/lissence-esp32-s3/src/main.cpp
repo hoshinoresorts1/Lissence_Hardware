@@ -1,9 +1,12 @@
 #include <Arduino.h>
-#include <driver/i2s.h>
 #include "LissenceBlePeripheral.h"
+#if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
+#include <driver/i2s.h>
+#endif
 
 namespace {
 
+#if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
 constexpr i2s_port_t MicI2SPort = I2S_NUM_0;
 constexpr int MicSckPin = 1;
 constexpr int MicWsPin = 2;
@@ -11,10 +14,43 @@ constexpr int MicSdPin = 3;
 constexpr uint32_t MicSampleRate = 16000;
 constexpr size_t MicSampleCount = 256;
 constexpr uint32_t MicPrintIntervalMs = 500;
+#endif
 
+#if ENABLE_AUDIO_STREAMING
+constexpr size_t AudioStreamSamplesPerChunk = 320;
+constexpr size_t AudioStreamBytesPerChunk = AudioStreamSamplesPerChunk * sizeof(int16_t);
+constexpr size_t AudioStreamPacketPayloadSize = 160;
+constexpr uint32_t AudioStreamDurationMs = 3000;
+#endif
+
+#if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
 uint32_t lastMicPrintMillis = 0;
+#endif
+#if ENABLE_AUDIO_STREAMING
+uint32_t audioStreamStartedMillis = 0;
+uint16_t audioStreamSequence = 0;
+#endif
+#if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
 bool isMicReady = false;
+#endif
+#if ENABLE_AUDIO_STREAMING
+bool isAudioStreaming = false;
 
+int16_t convertToPcm16(int32_t sample) {
+  const int32_t scaledSample = sample >> 11;
+  if (scaledSample > INT16_MAX) {
+    return INT16_MAX;
+  }
+
+  if (scaledSample < INT16_MIN) {
+    return INT16_MIN;
+  }
+
+  return static_cast<int16_t>(scaledSample);
+}
+#endif
+
+#if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
 void beginMicrophone() {
   const i2s_config_t i2sConfig = {
       .mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_RX),
@@ -66,7 +102,9 @@ void beginMicrophone() {
   Serial.print(", SD GPIO");
   Serial.println(MicSdPin);
 }
+#endif
 
+#if ENABLE_MICROPHONE
 void printMicrophoneLevels() {
   if (!isMicReady) {
     return;
@@ -114,6 +152,115 @@ void printMicrophoneLevels() {
 
   LissenceBlePeripheral::sendMicLevel(rms, peak);
 }
+#endif
+
+#if ENABLE_AUDIO_STREAMING
+void startAudioStream() {
+  if (!isMicReady) {
+    Serial.println("[AUDIO] Cannot start stream: microphone is not ready");
+    return;
+  }
+
+  isAudioStreaming = true;
+  audioStreamStartedMillis = millis();
+  audioStreamSequence = 0;
+  Serial.println("[AUDIO] 3 second PCM stream started");
+}
+
+void stopAudioStream(const char* reason) {
+  if (!isAudioStreaming) {
+    return;
+  }
+
+  isAudioStreaming = false;
+  Serial.print("[AUDIO] PCM stream stopped: ");
+  Serial.println(reason);
+}
+
+void processAudioStreamCommands() {
+  if (LissenceBlePeripheral::consumeAudioStreamStartRequest()) {
+    startAudioStream();
+  }
+
+  if (LissenceBlePeripheral::consumeAudioStreamStopRequest()) {
+    stopAudioStream("write command");
+  }
+}
+
+void sendAudioStreamChunk() {
+  int32_t rawSamples[AudioStreamSamplesPerChunk] = {};
+  int16_t pcmSamples[AudioStreamSamplesPerChunk] = {};
+  size_t bytesRead = 0;
+
+  const esp_err_t result = i2s_read(
+      MicI2SPort,
+      rawSamples,
+      sizeof(rawSamples),
+      &bytesRead,
+      pdMS_TO_TICKS(30));
+
+  if (result != ESP_OK || bytesRead == 0) {
+    Serial.print("[AUDIO] i2s_read failed during stream: ");
+    Serial.println(esp_err_to_name(result));
+    stopAudioStream("i2s read failure");
+    return;
+  }
+
+  const size_t sampleCount = min(bytesRead / sizeof(rawSamples[0]), AudioStreamSamplesPerChunk);
+  for (size_t i = 0; i < sampleCount; ++i) {
+    pcmSamples[i] = convertToPcm16(rawSamples[i]);
+  }
+
+  const size_t audioBytes = sampleCount * sizeof(pcmSamples[0]);
+  const uint8_t packetCount = static_cast<uint8_t>(
+      (audioBytes + AudioStreamPacketPayloadSize - 1) / AudioStreamPacketPayloadSize);
+  const uint8_t* audioBytesPointer = reinterpret_cast<const uint8_t*>(pcmSamples);
+  bool didDropPacket = false;
+
+  for (uint8_t packetIndex = 0; packetIndex < packetCount; ++packetIndex) {
+    const size_t offset = packetIndex * AudioStreamPacketPayloadSize;
+    const uint16_t payloadSize = static_cast<uint16_t>(
+        min(AudioStreamPacketPayloadSize, audioBytes - offset));
+    const bool didNotify = LissenceBlePeripheral::sendAudioStreamPacket(
+        audioStreamSequence,
+        packetIndex,
+        packetCount,
+        audioBytesPointer + offset,
+        payloadSize);
+
+    didDropPacket = didDropPacket || !didNotify;
+    delay(2);
+  }
+
+  if (audioStreamSequence % 25 == 0) {
+    Serial.print("[AUDIO] Stream chunk seq=");
+    Serial.print(audioStreamSequence);
+    Serial.print(", bytes=");
+    Serial.print(audioBytes);
+    Serial.print(", packets=");
+    Serial.print(packetCount);
+    if (didDropPacket) {
+      Serial.print(", notifyDrop=true");
+    }
+    Serial.println();
+  }
+
+  audioStreamSequence += 1;
+}
+
+void processAudioStream() {
+  if (!isAudioStreaming) {
+    return;
+  }
+
+  if (millis() - audioStreamStartedMillis >= AudioStreamDurationMs) {
+    stopAudioStream("3 second limit");
+    return;
+  }
+
+  sendAudioStreamChunk();
+}
+#endif
 
 }  // namespace
 
@@ -122,13 +269,21 @@ void setup() {
   delay(2000);
 
   Serial.println();
-  Serial.println("Lissence ESP32-C3 BLE + INMP441 microphone test boot");
-
+  Serial.println("[BOOT] ESP32-WROOM-32E boot");
+  Serial.println("[BOOT] BLE only mode");
   LissenceBlePeripheral::begin();
+#if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
   beginMicrophone();
+#endif
 }
 
 void loop() {
   LissenceBlePeripheral::loop();
+#if ENABLE_AUDIO_STREAMING
+  processAudioStreamCommands();
+  processAudioStream();
+#endif
+#if ENABLE_MICROPHONE
   printMicrophoneLevels();
+#endif
 }
