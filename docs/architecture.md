@@ -9,7 +9,7 @@ The hardware project is separated from the iOS app so ESP32 firmware, BLE protoc
 ```text
 iPhone BLE Central
         |
-        | scan/connect/write/subscribe
+        | scan/connect/write/subscribe notify
         v
 ESP32-C3 BLE Peripheral
         |
@@ -26,6 +26,13 @@ USB Serial Monitor
 - Print connection and write events to Serial
 - Send a test notification every 2 seconds while connected
 
+## BLE Communication Direction
+
+| Direction | Transport | Purpose |
+| --- | --- | --- |
+| ESP32-C3 -> iPhone | BLE Notify | test, mic_event, battery, status, error |
+| iPhone -> ESP32-C3 | BLE Write | haptic, stop, config, ping |
+
 ## Not Included Yet
 
 - INMP441 microphone sampling
@@ -36,10 +43,11 @@ USB Serial Monitor
 
 ## Planned Extension Points
 
-- Replace the test notification payload with microphone event messages.
+- Add microphone event notifications beside the current test notification payload.
 - Add iPhone-to-ESP32 haptic command parsing on the writable characteristic.
 - Split hardware modules into dedicated firmware components:
   - BLE transport
   - microphone input
   - haptic driver
   - power/battery state
+- Connect iPhone music mood output to BLE haptic command payloads.
