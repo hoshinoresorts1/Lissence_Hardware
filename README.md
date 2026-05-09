@@ -1,2 +1,4 @@
-# Lissence_Hardware
-Lissence_test 레포지토리의 하드웨어(BLE ESP32)의 저장소입니다.
+# 한국기술교육대학교 LISSENCE 팀
+청각장애인을 위한 촉각, 시각 변환 시스템
+
+- 역할:
