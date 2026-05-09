@@ -110,4 +110,18 @@ void loop() {
   delay(10);
 }
 
+void sendMicLevel(int32_t rms, int32_t peak) {
+  if (!isConnected || dataCharacteristic == nullptr) {
+    return;
+  }
+
+  String payload = String("{\"type\":\"mic_level\",\"rms\":") + rms +
+                   ",\"peak\":" + peak + "}";
+  dataCharacteristic->setValue(payload.c_str());
+  dataCharacteristic->notify();
+
+  Serial.print("[BLE] Notify sent: ");
+  Serial.println(payload);
+}
+
 }  // namespace LissenceBlePeripheral

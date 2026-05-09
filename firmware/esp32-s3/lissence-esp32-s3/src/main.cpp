@@ -111,6 +111,8 @@ void printMicrophoneLevels() {
   Serial.print(rms);
   Serial.print(", Peak: ");
   Serial.println(peak);
+
+  LissenceBlePeripheral::sendMicLevel(rms, peak);
 }
 
 }  // namespace

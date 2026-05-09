@@ -10,5 +10,6 @@ constexpr const char* CharacteristicUuid = "7d2f3a11-3b7a-4f9f-9b37-6b6a0f4f7c10
 
 void begin();
 void loop();
+void sendMicLevel(int32_t rms, int32_t peak);
 
 }  // namespace LissenceBlePeripheral

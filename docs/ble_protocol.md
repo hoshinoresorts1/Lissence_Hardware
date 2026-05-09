@@ -48,6 +48,7 @@ ESP32는 iPhone이 notify를 subscribe한 뒤 상태와 이벤트를 Characteris
 | type | 목적 | 주요 필드 |
 | --- | --- | --- |
 | `test` | 연결 검증용 주기 메시지 | `seq` |
+| `mic_level` | ESP32에서 측정한 마이크 입력 레벨 | `rms`, `peak` |
 | `mic_event` | ESP32 마이크 기반 이벤트 알림 | `event`, `level` |
 | `battery` | 배터리 잔량 알림 | `level` |
 | `status` | 장치 상태 알림 | `state` |
@@ -57,6 +58,10 @@ ESP32는 iPhone이 notify를 subscribe한 뒤 상태와 이벤트를 Characteris
 
 ```json
 {"type":"test","seq":1}
+```
+
+```json
+{"type":"mic_level","rms":1234,"peak":8912}
 ```
 
 ```json
@@ -163,6 +168,10 @@ ESP32 -> iPhone notify:
 {"type":"test","seq":1}
 ```
 
+```json
+{"type":"mic_level","rms":1234,"peak":8912}
+```
+
 iPhone -> ESP32 write:
 
 ```json
@@ -171,8 +180,8 @@ iPhone -> ESP32 write:
 
 ## 앞으로의 단계
 
-1. ESP32에서 INMP441 기반 `mic_event` notify 구현
-2. iPhone 앱 BLE 테스트 화면에서 `mic_event` 수신 처리
+1. iPhone 앱 BLE 테스트 화면에서 `mic_level` 수신값 확인
+2. ESP32에서 INMP441 기반 `mic_event` notify 구현
 3. DRV2605L 도착 후 `haptic` command 실행
 4. 음악모드 `currentMood`를 `haptic` write payload로 연결
 5. 배터리 측정 회로 추가 후 `battery` notify 구현
