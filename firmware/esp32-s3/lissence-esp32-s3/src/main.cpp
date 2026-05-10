@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "LissenceBlePeripheral.h"
+#include "HapticMotorController.h"
 #if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
 #include <driver/i2s.h>
 #endif
@@ -11,13 +12,16 @@ constexpr i2s_port_t MicI2SPort = I2S_NUM_0;
 constexpr int MicSckPin = 26;
 constexpr int MicWsPin = 25;
 constexpr int MicSdPin = 33;
-constexpr uint32_t MicSampleRate = 8000;
+constexpr uint32_t MicSampleRate = 16000;
 constexpr size_t MicSampleCount = 256;
 constexpr uint32_t MicPrintIntervalMs = 500;
+constexpr int32_t CandidateRmsThreshold = 45000;
+constexpr int32_t CandidatePeakThreshold = 90000;
+constexpr uint32_t CandidateCooldownMs = 2000;
 #endif
 
 #if ENABLE_AUDIO_STREAMING
-constexpr size_t AudioStreamSamplesPerChunk = 160;
+constexpr size_t AudioStreamSamplesPerChunk = 320;
 constexpr size_t AudioStreamBytesPerChunk = AudioStreamSamplesPerChunk * sizeof(int16_t);
 constexpr size_t AudioStreamPacketPayloadSize = 160;
 constexpr uint32_t AudioStreamDurationMs = 3000;
@@ -25,6 +29,7 @@ constexpr uint32_t AudioStreamDurationMs = 3000;
 
 #if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
 uint32_t lastMicPrintMillis = 0;
+uint32_t lastCandidateMillis = 0;
 #endif
 #if ENABLE_AUDIO_STREAMING
 uint32_t audioStreamStartedMillis = 0;
@@ -105,6 +110,27 @@ void beginMicrophone() {
 #endif
 
 #if ENABLE_MICROPHONE
+void detectAudioCandidate(int32_t rms, int32_t peak) {
+  const bool isCandidate = rms >= CandidateRmsThreshold || peak >= CandidatePeakThreshold;
+  if (!isCandidate) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  if (now - lastCandidateMillis < CandidateCooldownMs) {
+    return;
+  }
+
+  lastCandidateMillis = now;
+
+  Serial.print("[CANDIDATE] loud_sound rms=");
+  Serial.print(rms);
+  Serial.print(" peak=");
+  Serial.println(peak);
+
+  LissenceBlePeripheral::sendAudioCandidate("loud_sound", rms, peak);
+}
+
 void printMicrophoneLevels() {
   if (!isMicReady) {
     return;
@@ -150,6 +176,7 @@ void printMicrophoneLevels() {
   Serial.print(", Peak: ");
   Serial.println(peak);
 
+  detectAudioCandidate(rms, peak);
   LissenceBlePeripheral::sendMicLevel(rms, peak);
 }
 #endif
@@ -165,7 +192,7 @@ void startAudioStream() {
   LissenceBlePeripheral::setAudioStreamingActive(true);
   audioStreamStartedMillis = millis();
   audioStreamSequence = 0;
-  Serial.println("[AUDIO] 3 second PCM stream started at 8kHz");
+  Serial.println("[AUDIO] 3 second PCM stream started at 16kHz");
 }
 
 void stopAudioStream(const char* reason) {
@@ -272,7 +299,8 @@ void setup() {
 
   Serial.println();
   Serial.println("[BOOT] ESP32-WROOM-32E boot");
-  Serial.println("[BOOT] BLE + INMP441 microphone mode");
+  Serial.println("[BOOT] BLE + INMP441 microphone + DRV2605L haptic mode");
+  HapticMotorController::begin();
   LissenceBlePeripheral::begin();
 #if ENABLE_MICROPHONE || ENABLE_AUDIO_STREAMING
   beginMicrophone();
@@ -281,6 +309,7 @@ void setup() {
 
 void loop() {
   LissenceBlePeripheral::loop();
+  HapticMotorController::loop();
 #if ENABLE_AUDIO_STREAMING
   processAudioStreamCommands();
   processAudioStream();

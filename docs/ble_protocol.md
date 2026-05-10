@@ -50,6 +50,7 @@ ESP32는 iPhone이 notify를 subscribe한 뒤 상태와 이벤트를 Characteris
 | --- | --- | --- |
 | `test` | 연결 검증용 주기 메시지 | `seq` |
 | `mic_level` | ESP32에서 측정한 마이크 입력 레벨 | `rms`, `peak` |
+| `audio_candidate` | ESP32 lightweight 후보 감지 이벤트 | `kind`, `rms`, `peak` |
 | `mic_event` | ESP32 마이크 기반 이벤트 알림 | `event`, `level` |
 | `battery` | 배터리 잔량 알림 | `level` |
 | `status` | 장치 상태 알림 | `state` |
@@ -63,6 +64,10 @@ ESP32는 iPhone이 notify를 subscribe한 뒤 상태와 이벤트를 Characteris
 
 ```json
 {"type":"mic_level","rms":1234,"peak":8912}
+```
+
+```json
+{"type":"audio_candidate","kind":"loud_sound","rms":12345,"peak":67890}
 ```
 
 ```json
@@ -90,12 +95,12 @@ PCM audio stream은 continuous streaming이 아니라 iPhone의 write command로
 | 항목 | 값 |
 | --- | --- |
 | Source | INMP441 I2S microphone |
-| Sample rate | 8 kHz |
+| Sample rate | 16 kHz |
 | Channel | Mono |
 | PCM format | 16-bit signed little-endian |
 | Chunk duration | 20 ms |
-| Samples per chunk | 160 samples |
-| PCM bytes per chunk | 320 bytes |
+| Samples per chunk | 320 samples |
+| PCM bytes per chunk | 640 bytes |
 
 ### Binary packet header
 
@@ -110,7 +115,7 @@ PCM audio stream은 continuous streaming이 아니라 iPhone의 write command로
 | 5 | `uint16` | `payloadSize` | 이 packet의 PCM payload byte 수 |
 | 7 | bytes | `payload` | 16-bit signed PCM little-endian 일부 |
 
-현재 ESP32 PoC는 MTU 강제 튜닝 없이 packet payload를 최대 160 bytes로 제한합니다. 320 byte chunk는 보통 2개 packet으로 전송됩니다. BLE notify queue 과부하를 줄이기 위해 packet 사이에 약 3ms pacing delay를 둡니다. Audio streaming 중에는 같은 characteristic을 사용하는 `test`, `mic_level` JSON notify를 잠시 중단하고, streaming 종료 후 재개합니다.
+현재 ESP32 PoC는 MTU 강제 튜닝 없이 packet payload를 최대 160 bytes로 제한합니다. 640 byte chunk는 보통 4개 packet으로 전송됩니다. BLE notify queue 과부하를 줄이기 위해 packet 사이에 약 3ms pacing delay를 둡니다. Audio streaming 중에는 같은 characteristic을 사용하는 `test`, `mic_level` JSON notify를 잠시 중단하고, streaming 종료 후 재개합니다.
 
 ### Audio Stream 제어 command
 
@@ -139,7 +144,12 @@ iPhone 앱은 같은 Data Characteristic에 write하여 ESP32로 명령을 전�
 
 | pattern | 용도 |
 | --- | --- |
+| `siren` | 사이렌 계열 위험 감지 햅틱 |
+| `fireAlarm` | 화재 경보 계열 위험 감지 햅틱 |
+| `carHorn` | 차량 경적 계열 위험 감지 햅틱 |
+| `speech` | 사람 말/음성 계열 알림 햅틱 |
 | `warning` | 일반 위험 경고 |
+| `test` | DRV2605L/LRA 동작 확인 |
 | `urgent` | 긴급 위험 경고 |
 | `calm` | 낮은 강도의 안정 패턴 |
 | `pulse` | 단순 pulse 패턴 |
@@ -153,6 +163,22 @@ iPhone 앱은 같은 Data Characteristic에 write하여 ESP32로 명령을 전�
 
 ```json
 {"type":"haptic","pattern":"warning"}
+```
+
+```json
+{"type":"haptic","pattern":"siren"}
+```
+
+```json
+{"type":"haptic","pattern":"fireAlarm"}
+```
+
+```json
+{"type":"haptic","pattern":"carHorn"}
+```
+
+```json
+{"type":"haptic","pattern":"test"}
 ```
 
 ```json
@@ -179,15 +205,38 @@ iPhone 앱은 같은 Data Characteristic에 write하여 ESP32로 명령을 전�
 {"type":"ping","seq":10}
 ```
 
+## DRV2605L 햅틱 제어
+
+현재 ESP32-WROOM-32E 펌웨어는 BLE `haptic` write command를 받으면 BLE callback 안에서 직접 모터를 구동하지 않고, pending pattern으로 저장한 뒤 main `loop()`에서 DRV2605L effect sequence를 실행합니다. BLE stack이 I2C 통신이나 `delay()`로 막히지 않게 하기 위한 구조입니다.
+
+### DRV2605L 배선
+
+| DRV2605L | ESP32-WROOM-32E |
+| --- | --- |
+| VIN | 3V3 |
+| GND | GND |
+| SDA | GPIO21 |
+| SCL | GPIO22 |
+| OUT+ / OUT- | LRA motor |
+
+### DRV2605L 설정
+
+| 항목 | 값 |
+| --- | --- |
+| I2C address | `0x5A` |
+| Motor type | LRA |
+| Library | `6` |
+| Mode | Internal trigger |
+
 ## 현재 버전에서 하지 않을 것
 
 - Continuous raw audio BLE streaming
 - ESP32에서 CoreML inference 실행
 - Apple Watch의 ESP32 직접 BLE 연결
-- DRV2605L 제어 구현
+- DRV2605L effect UX 최적화
 - iPhone SoundAnalysis와 PCM stream 직접 연결
 
-DRV2605L 기반 햅틱 실행은 하드웨어 도착 후 다음 단계에서 구현합니다.
+DRV2605L 기반 햅틱 실행은 현재 구분 가능한 기본 effect sequence 검증 단계입니다.
 
 ## 검증 결과
 
@@ -236,6 +285,6 @@ iPhone -> ESP32 write:
 1. iPhone 앱 BLE 테스트 화면에서 `mic_level` 수신값 확인
 2. PCM audio stream binary notify packet reconstruction 안정성 검증
 3. ESP32에서 INMP441 기반 `mic_event` notify 구현
-4. DRV2605L 도착 후 `haptic` command 실행
+4. DRV2605L `haptic` pattern UX 조정
 5. 음악모드 `currentMood`를 `haptic` write payload로 연결
 6. 배터리 측정 회로 추가 후 `battery` notify 구현

@@ -1,4 +1,5 @@
 #include "LissenceBlePeripheral.h"
+#include "HapticMotorController.h"
 
 #include <NimBLEDevice.h>
 
@@ -21,6 +22,22 @@ constexpr uint8_t AudioPacketMagic = 0xA1;
 constexpr size_t AudioPacketHeaderSize = 7;
 constexpr size_t MaxAudioPacketPayloadSize = 160;
 #endif
+
+String extractJsonStringField(const String& payload, const char* fieldName) {
+  const String key = String("\"") + fieldName + "\":\"";
+  const int keyIndex = payload.indexOf(key);
+  if (keyIndex < 0) {
+    return "";
+  }
+
+  const int valueStart = keyIndex + key.length();
+  const int valueEnd = payload.indexOf("\"", valueStart);
+  if (valueEnd < 0) {
+    return "";
+  }
+
+  return payload.substring(valueStart, valueEnd);
+}
 
 class ServerCallbacks final : public NimBLEServerCallbacks {
  public:
@@ -56,8 +73,18 @@ class DataCharacteristicCallbacks final : public NimBLECharacteristicCallbacks {
     Serial.write(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     Serial.println();
 
-#if ENABLE_AUDIO_STREAMING
     String payload(value.c_str());
+    const String type = extractJsonStringField(payload, "type");
+    if (type == "haptic") {
+      const String pattern = extractJsonStringField(payload, "pattern");
+      if (pattern.length() > 0) {
+        HapticMotorController::enqueuePattern(pattern);
+      } else {
+        Serial.println("[BLE] haptic command missing pattern");
+      }
+    }
+
+#if ENABLE_AUDIO_STREAMING
     if (payload.indexOf("\"type\":\"config\"") >= 0 &&
         payload.indexOf("\"audio_stream\":true") >= 0) {
       audioStreamStartRequested = true;
@@ -167,6 +194,20 @@ void sendMicLevel(int32_t rms, int32_t peak) {
   dataCharacteristic->notify();
 
   Serial.print("[BLE] Notify sent: ");
+  Serial.println(payload);
+}
+
+void sendAudioCandidate(const char* kind, int32_t rms, int32_t peak) {
+  if (!isConnected || dataCharacteristic == nullptr) {
+    return;
+  }
+
+  String payload = String("{\"type\":\"audio_candidate\",\"kind\":\"") + kind +
+                   "\",\"rms\":" + rms + ",\"peak\":" + peak + "}";
+  dataCharacteristic->setValue(payload.c_str());
+  dataCharacteristic->notify();
+
+  Serial.print("[BLE] Candidate notify sent: ");
   Serial.println(payload);
 }
 #endif

@@ -15,6 +15,7 @@ void begin();
 void loop();
 #if ENABLE_MICROPHONE
 void sendMicLevel(int32_t rms, int32_t peak);
+void sendAudioCandidate(const char* kind, int32_t rms, int32_t peak);
 #endif
 
 #if ENABLE_AUDIO_STREAMING
